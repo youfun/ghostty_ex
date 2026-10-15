@@ -10,7 +10,7 @@ full Unicode, 24-bit color, scrollback with text reflow. Terminals are GenServer
 
 ```elixir
 def deps do
-  [{:ghostty, "~> 0.4"}]
+  [{:ghostty, "~> 0.5"}]
 end
 ```
 
@@ -319,7 +319,7 @@ See the [`examples/`](https://github.com/dannote/ghostty_ex/tree/master/examples
 
 ## Development
 
-[Zig 0.15+](https://ziglang.org) is only required for source builds.
+[Zig 0.16.0](https://ziglang.org) is required for source builds.
 
 ```bash
 git clone https://github.com/dannote/ghostty_ex

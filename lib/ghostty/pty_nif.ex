@@ -10,6 +10,7 @@ defmodule Ghostty.PTY.Nif do
     force_build: System.get_env("GHOSTTY_BUILD") in ["1", "true"],
     targets: ~w(x86_64-linux-gnu aarch64-linux-gnu aarch64-macos-none),
     zig_code_path: "pty_nif.zig",
+    c: [headers: [c: "pty_nif.h"]],
     resources: [:PtyResource],
     nifs: [
       nif_pty_open: 5,

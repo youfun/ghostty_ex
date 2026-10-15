@@ -26,6 +26,7 @@ defmodule LiveTerminal.MixProject do
   defp deps do
     [
       {:ghostty, path: "../.."},
+      {:zigler, "~> 0.16.0", runtime: false},
       {:phoenix, "~> 1.8"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_view, "~> 1.1"},

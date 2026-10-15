@@ -4,6 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const ghostty_c = b.addTranslateC(.{
+        .root_source_file = b.path("../priv/include/ghostty/vt.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    ghostty_c.addIncludePath(b.path("../priv/include"));
+
     const mod = b.createModule(.{
         .root_source_file = b.path("fuzz_vt.zig"),
         .target = target,
@@ -11,13 +19,11 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    mod.addIncludePath(b.path("../priv/include"));
+    mod.addImport("ghostty", ghostty_c.createModule());
     mod.addLibraryPath(b.path("../priv/lib"));
     mod.linkSystemLibrary("ghostty-vt", .{});
 
-    if (target.result.os.tag == .macos) {
-        mod.addRPath(.{ .cwd_relative = b.pathFromRoot("../priv/lib") });
-    }
+    mod.addRPath(.{ .cwd_relative = b.pathFromRoot("../priv/lib") });
 
     const fuzz = b.addTest(.{ .root_module = mod });
     const run = b.addRunArtifact(fuzz);

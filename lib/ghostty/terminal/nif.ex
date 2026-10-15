@@ -16,6 +16,7 @@ defmodule Ghostty.Terminal.Nif do
     targets: ~w(x86_64-linux-gnu aarch64-linux-gnu aarch64-macos-none),
     zig_code_path: "ghostty_nif.zig",
     c: [
+      headers: [c: "ghostty_nif.h"],
       include_dirs: [{:priv, "include"}],
       link_lib: [{:priv, @ghostty_vt_lib}]
     ],

@@ -2,21 +2,7 @@ const beam = @import("beam");
 const root = @import("root");
 const std = @import("std");
 const builtin = @import("builtin");
-
-const c = @cImport({
-    if (builtin.os.tag == .macos)
-        @cInclude("util.h")
-    else
-        @cInclude("pty.h");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-    @cInclude("sys/ioctl.h");
-    @cInclude("signal.h");
-    @cInclude("sys/wait.h");
-    @cInclude("poll.h");
-    @cInclude("stdlib.h");
-    @cInclude("errno.h");
-});
+const c = @import("c");
 
 const PtyData = struct {
     master_fd: c_int,
@@ -107,7 +93,8 @@ fn send_exit_and_wait(child_pid: c.pid_t, closed: *std.atomic.Value(bool), owner
             send_exit_status(0, closed, owner);
             return;
         }
-        std.Thread.sleep(1 * std.time.ns_per_ms);
+        var delay: c.struct_timespec = .{ .tv_sec = 0, .tv_nsec = 1 * std.time.ns_per_ms };
+        _ = c.nanosleep(&delay, null);
     }
 
     send_exit_status(0, closed, owner);
@@ -131,7 +118,7 @@ fn reader_loop(master_fd: c_int, child_pid: c.pid_t, owner: beam.pid, closed: *s
     var buf: [4096]u8 = undefined;
 
     const ready_env = beam.alloc_env();
-    beam.send(owner, .{ .pty_ready }, .{ .env = ready_env }) catch {};
+    beam.send(owner, .{.pty_ready}, .{ .env = ready_env }) catch {};
     beam.free_env(ready_env);
 
     while (!closed.load(.acquire)) {
@@ -175,7 +162,6 @@ fn reader_loop(master_fd: c_int, child_pid: c.pid_t, owner: beam.pid, closed: *s
 }
 
 pub fn nif_pty_open(cmd: []const u8, args: []const []const u8, cols: u16, rows: u16, owner: beam.pid) !PtyResource {
-
     var ws: c.struct_winsize = .{
         .ws_col = cols,
         .ws_row = rows,

@@ -1,7 +1,7 @@
 defmodule Ghostty.MixProject do
   use Mix.Project
 
-  @version "0.5.0"
+  @version "0.5.1"
   @source_url "https://github.com/dannote/ghostty_ex"
 
   def project do
@@ -120,14 +120,13 @@ defmodule Ghostty.MixProject do
   defp deps do
     [
       {:zigler_precompiled, "~> 0.1.3"},
-      {:zigler, "~> 0.15.2", runtime: false, optional: true},
+      {:zigler, "~> 0.16.0", runtime: false, optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_dna, "~> 1.1", only: [:dev, :test], runtime: false},
       {:ex_slop, "~> 0.2", only: [:dev, :test], runtime: false},
-      {:oxc, "~> 0.5"},
-      {:ex_doc, "~> 0.35", only: :dev, runtime: false}
+      {:oxc, "~> 0.5"}
     ]
   end
 
@@ -138,6 +137,7 @@ defmodule Ghostty.MixProject do
       files: ~w[
         lib/ghostty/terminal/nif.ex
         lib/ghostty/terminal/ghostty_nif.zig
+        lib/ghostty/terminal/ghostty_nif.h
         lib/ghostty/terminal/cell.ex
         lib/ghostty/terminal.ex
         lib/ghostty/tty.ex
@@ -149,6 +149,7 @@ defmodule Ghostty.MixProject do
         lib/ghostty/test.ex
         lib/ghostty/pty_nif.ex
         lib/ghostty/pty_nif.zig
+        lib/ghostty/pty_nif.h
         lib/ghostty/live_terminal.ex
         lib/ghostty/live_terminal/component.ex
         lib/ghostty/mods.ex

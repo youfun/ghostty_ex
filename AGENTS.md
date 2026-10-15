@@ -4,7 +4,7 @@
 
 ```sh
 mix ghostty.setup              # clone Ghostty, build libghostty-vt into priv/
-GHOSTTY_BUILD=1 mix compile    # build NIF from source (requires Zig 0.15+)
+GHOSTTY_BUILD=1 mix compile    # build NIF from source (requires Zig 0.16.0)
 mix test                       # full suite
 ```
 

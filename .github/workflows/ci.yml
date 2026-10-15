@@ -13,14 +13,14 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, otp: '27', elixir: '1.18' }
-          # Zig 0.15 cannot link against the macOS 26 SDK shipped by macos-latest.
+          # Keep the macOS SDK stable for reproducible native builds.
           - { os: macos-15, otp: '27', elixir: '1.18' }
     steps:
       - uses: actions/checkout@v4
 
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - uses: erlef/setup-beam@v1
         with:
@@ -39,7 +39,9 @@ jobs:
       - name: Install libghostty-vt
         run: |
           mkdir -p priv/lib priv/include
-          cp /tmp/ghostty-src/zig-out/lib/libghostty-vt.* priv/lib/ 2>/dev/null || true
+          for lib in /tmp/ghostty-src/zig-out/lib/libghostty-vt.*; do
+            if [ -f "$lib" ] || [ -L "$lib" ]; then cp -L "$lib" priv/lib/; fi
+          done
           cp -R /tmp/ghostty-src/zig-out/include/ghostty priv/include/
 
           for env in dev test; do
@@ -60,6 +62,7 @@ jobs:
       - run: mix format --check-formatted
       - run: mix credo --strict
       - run: mix ex_dna
+      - run: mix fuzz.sanity
       - run: GHOSTTY_BUILD=1 mix test
 
   ts:
@@ -79,12 +82,14 @@ jobs:
   example-live-terminal:
     needs: [test, ts]
     runs-on: ubuntu-latest
+    env:
+      GHOSTTY_BUILD: "1"
     steps:
       - uses: actions/checkout@v4
 
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - uses: erlef/setup-beam@v1
         with:
@@ -106,11 +111,12 @@ jobs:
 
       - name: Install libghostty-vt for example
         run: |
-          mkdir -p examples/live_terminal/_build/test/lib/ghostty/priv/lib
-          mkdir -p examples/live_terminal/_build/test/lib/ghostty/priv/include
-          cp /tmp/ghostty-src/zig-out/lib/libghostty-vt.* examples/live_terminal/_build/test/lib/ghostty/priv/lib/ 2>/dev/null || true
-          cp -R /tmp/ghostty-src/zig-out/include/ghostty examples/live_terminal/_build/test/lib/ghostty/priv/include/
-          echo "LD_LIBRARY_PATH=$PWD/examples/live_terminal/_build/test/lib/ghostty/priv/lib" >> "$GITHUB_ENV"
+          mkdir -p priv/lib priv/include
+          for lib in /tmp/ghostty-src/zig-out/lib/libghostty-vt.*; do
+            if [ -f "$lib" ] || [ -L "$lib" ]; then cp -L "$lib" priv/lib/; fi
+          done
+          cp -R /tmp/ghostty-src/zig-out/include/ghostty priv/include/
+          echo "LD_LIBRARY_PATH=$PWD/priv/lib:$PWD/examples/live_terminal/_build/dev/lib/ghostty/priv/lib:$PWD/examples/live_terminal/_build/test/lib/ghostty/priv/lib" >> "$GITHUB_ENV"
 
       - name: Install example assets deps
         working-directory: examples/live_terminal/assets

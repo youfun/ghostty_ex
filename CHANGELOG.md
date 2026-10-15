@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (Unreleased)
+
+### Changed
+
+- Upgrade the pinned `libghostty-vt` engine from `baad0aa` to `22fa134` (2026-10-15), including upstream memory-safety, Unicode, reflow, and parser fixes, and move source builds to Zig/Zigler 0.16.
+- Make `mix ghostty.setup` update an existing cached Ghostty checkout to the pinned revision and rebuild stale engine output when the source revision changes.
 
 ## 0.5.0 (2026-07-29)
 

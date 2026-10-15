@@ -145,6 +145,43 @@ defmodule Ghostty.TerminalTest do
 
       GenServer.stop(term)
     end
+
+    test "CAN cancels an in-progress OSC without applying it" do
+      {:ok, term} = Terminal.start_link()
+
+      Terminal.write(term, ["\e]2;cancelled", <<0x18>>])
+      refute_receive :title_changed, 50
+
+      Terminal.write(term, "\e]2;applied\a")
+      assert_receive :title_changed
+    end
+
+    test "attaches a combining character to a cell at pending wrap" do
+      {:ok, term} = Terminal.start_link(cols: 2, rows: 2)
+
+      Terminal.write(term, "ab\u0301")
+
+      assert [[{"a", _, _, _}, {"b́", _, _, _}] | _] = Terminal.cells(term)
+    end
+
+    test "preserves a variation selector inside a multi-codepoint grapheme" do
+      {:ok, term} = Terminal.start_link(cols: 4, rows: 2)
+      grapheme = "👨‍⚕️"
+
+      Terminal.write(term, grapheme)
+
+      [row | _] = Terminal.cells(term)
+      assert Enum.map_join(row, fn {text, _, _, _} -> text end) == grapheme
+    end
+
+    test "preserves a grapheme that becomes wide at the line boundary" do
+      {:ok, term} = Terminal.start_link(cols: 2, rows: 1)
+
+      Terminal.write(term, "a❤")
+      Terminal.write(term, "️")
+
+      assert [[{"a", _, _, _}, {"❤️", _, _, _}]] = Terminal.cells(term)
+    end
   end
 
   describe "snapshot/2" do
@@ -207,6 +244,17 @@ defmodule Ghostty.TerminalTest do
       {:ok, text} = Terminal.snapshot(term)
       assert text =~ "ABCDE"
       GenServer.stop(term)
+    end
+
+    test "clears pending wrap when widening" do
+      {:ok, term} = Terminal.start_link(cols: 5, rows: 2)
+      Terminal.write(term, "abcde")
+
+      Terminal.resize(term, 10, 2)
+      Terminal.write(term, "X")
+
+      [row | _] = Terminal.cells(term)
+      assert Enum.map_join(row, fn {text, _, _, _} -> text end) == "abcdeX"
     end
   end
 
@@ -317,6 +365,17 @@ defmodule Ghostty.TerminalTest do
       assert after_write.total > initial.total
 
       GenServer.stop(term)
+    end
+
+    test "max_scrollback limits retained history" do
+      data = Enum.map_join(1..5_000, &"Line #{&1}\r\n")
+      {:ok, limited} = Terminal.start_link(cols: 10, rows: 3, max_scrollback: 0)
+      {:ok, unlimited} = Terminal.start_link(cols: 10, rows: 3, max_scrollback: 100_000)
+
+      Terminal.write(limited, data)
+      Terminal.write(unlimited, data)
+
+      assert Terminal.scrollbar(limited).total < Terminal.scrollbar(unlimited).total
     end
   end
 

@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Ghostty.Setup do
       Mix.shell().info("Using local Ghostty source: #{dir}")
     else
       if File.dir?(Path.join(dir, ".git")) do
-        Mix.shell().info("Ghostty source already cloned at #{dir}")
+        sync_source(dir)
       else
         ref = ghostty_ref()
         Mix.shell().info("Cloning ghostty (#{short_ref(ref)})...")
@@ -58,14 +58,43 @@ defmodule Mix.Tasks.Ghostty.Setup do
     end
   end
 
+  defp sync_source(dir) do
+    ref = ghostty_ref()
+    current_ref = cmd_output!("git", ["-C", dir, "rev-parse", "HEAD"])
+
+    if current_ref == ref do
+      Mix.shell().info("Ghostty source already at #{short_ref(ref)} in #{dir}")
+    else
+      source_dirty? =
+        cmd_output!("git", ["-C", dir, "status", "--porcelain", "--untracked-files=no"]) != ""
+
+      if source_dirty? do
+        Mix.raise("cannot update modified Ghostty source at #{dir}; commit or discard its tracked changes first")
+      end
+
+      Mix.shell().info("Updating Ghostty source to #{short_ref(ref)} in #{dir}...")
+      cmd!("git", ["-C", dir, "fetch", "--depth", "1", "origin", ref])
+      cmd!("git", ["-C", dir, "checkout", "--detach", "FETCH_HEAD"])
+    end
+  end
+
   defp build(source_dir) do
     zig_out = Path.join(source_dir, "zig-out")
+    build_ref_file = Path.join(zig_out, ".ghostty-ex-ref")
+    source_ref = cmd_output!("git", ["-C", source_dir, "rev-parse", "HEAD"])
+    zig_version = cmd_output!("zig", ["version"])
+    host = :erlang.system_info(:system_architecture)
+    build_stamp = Enum.join([source_ref, zig_version, host], "\n")
+    source_dirty? = cmd_output!("git", ["-C", source_dir, "status", "--porcelain", "--untracked-files=no"]) != ""
+    built_ref = File.read(build_ref_file)
 
-    if File.dir?(Path.join(zig_out, "lib")) do
-      Mix.shell().info("libghostty-vt already built (delete #{zig_out} to rebuild)")
+    if File.dir?(Path.join(zig_out, "lib")) and not source_dirty? and built_ref == {:ok, build_stamp} do
+      Mix.shell().info("libghostty-vt already built for #{short_ref(source_ref)} with Zig #{zig_version}")
     else
-      Mix.shell().info("Building libghostty-vt...")
+      File.rm_rf!(zig_out)
+      Mix.shell().info("Building libghostty-vt (#{short_ref(source_ref)}, Zig #{zig_version})...")
       cmd!("zig", ["build", "-Demit-lib-vt", "-Doptimize=ReleaseFast"], cd: source_dir)
+      unless source_dirty?, do: File.write!(build_ref_file, build_stamp)
     end
   end
 
@@ -106,7 +135,10 @@ defmodule Mix.Tasks.Ghostty.Setup do
   defp copy_libs(src_dir, dest_dir) do
     src_dir
     |> File.ls!()
-    |> Enum.filter(&String.contains?(&1, "ghostty-vt"))
+    |> Enum.filter(fn file ->
+      src = Path.join(src_dir, file)
+      String.contains?(file, "ghostty-vt") and File.regular?(src)
+    end)
     |> Enum.each(fn file ->
       src = Path.join(src_dir, file)
       dest = Path.join(dest_dir, file)
@@ -148,6 +180,16 @@ defmodule Mix.Tasks.Ghostty.Setup do
     if status != 0 do
       Mix.raise("#{cmd} #{Enum.join(args, " ")} failed:\n#{output}")
     end
+  end
+
+  defp cmd_output!(cmd, args) do
+    {output, status} = System.cmd(cmd, args, stderr_to_stdout: true)
+
+    if status != 0 do
+      Mix.raise("#{cmd} #{Enum.join(args, " ")} failed:\n#{output}")
+    end
+
+    String.trim(output)
   end
 
   defp project_root do

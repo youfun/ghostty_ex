@@ -2,15 +2,8 @@ const beam = @import("beam");
 const root = @import("root");
 const std = @import("std");
 const builtin = @import("builtin");
-const g = @cImport(@cInclude("ghostty/vt.h"));
-const c = @cImport({
-    @cInclude("errno.h");
-    @cInclude("fcntl.h");
-    @cInclude("poll.h");
-    @cInclude("sys/ioctl.h");
-    @cInclude("termios.h");
-    @cInclude("unistd.h");
-});
+const c = @import("c");
+const g = c;
 
 const TerminalData = struct {
     terminal: g.GhosttyTerminal,
@@ -266,12 +259,17 @@ fn on_title_changed(terminal: g.GhosttyTerminal, userdata: ?*anyopaque) callconv
 
 pub fn nif_new(cols: u16, rows: u16, max_scrollback: u32) !TerminalResource {
     var terminal: g.GhosttyTerminal = undefined;
-    const result = g.ghostty_terminal_new(null, &terminal, .{
-        .cols = cols,
-        .rows = rows,
-        .max_scrollback = max_scrollback,
-    });
+    const result = g.ghostty_terminal_new(null, &terminal, cols, rows);
     if (result != g.GHOSTTY_SUCCESS) return error.terminal_creation_failed;
+    errdefer g.ghostty_terminal_free(terminal);
+
+    var max_scrollback_lines: usize = max_scrollback;
+    if (g.ghostty_terminal_set(
+        terminal,
+        g.GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+        &max_scrollback_lines,
+    ) != g.GHOSTTY_SUCCESS) return error.scrollback_configuration_failed;
+
     return TerminalResource.create(.{ .terminal = terminal }, .{});
 }
 
@@ -685,26 +683,26 @@ fn make_mouse_modes_term(terminal: g.GhosttyTerminal) beam.term {
     var tracking = false;
     _ = g.ghostty_terminal_get(terminal, g.GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &tracking);
 
-    var x10 = false;
-    _ = g.ghostty_terminal_mode_get(terminal, dec_mode(9), &x10);
-
-    var normal = false;
-    _ = g.ghostty_terminal_mode_get(terminal, dec_mode(1000), &normal);
-
-    var button = false;
-    _ = g.ghostty_terminal_mode_get(terminal, dec_mode(1002), &button);
-
-    var any = false;
-    _ = g.ghostty_terminal_mode_get(terminal, dec_mode(1003), &any);
-
-    var sgr = false;
-    _ = g.ghostty_terminal_mode_get(terminal, dec_mode(1006), &sgr);
+    const x10 = terminal_mode_get(terminal, dec_mode(9));
+    const normal = terminal_mode_get(terminal, dec_mode(1000));
+    const button = terminal_mode_get(terminal, dec_mode(1002));
+    const any = terminal_mode_get(terminal, dec_mode(1003));
+    const sgr = terminal_mode_get(terminal, dec_mode(1006));
 
     return beam.make(.{ tracking, x10, normal, button, any, sgr }, .{});
 }
 
 fn dec_mode(value: u16) g.GhosttyMode {
     return g.ghostty_mode_new(value, false);
+}
+
+fn terminal_mode_get(terminal: g.GhosttyTerminal, mode: g.GhosttyMode) bool {
+    var config: g.GhosttyTerminalModeConfig = .{
+        .mode = mode,
+        .value = false,
+    };
+    _ = g.ghostty_terminal_get(terminal, g.GHOSTTY_TERMINAL_DATA_MODE, &config);
+    return config.value;
 }
 
 pub fn nif_scrollbar(res: TerminalResource) beam.term {
@@ -715,10 +713,7 @@ pub fn nif_scrollbar(res: TerminalResource) beam.term {
 }
 
 pub fn nif_focus_mode(res: TerminalResource) bool {
-    const t = res.unpack().terminal;
-    var enabled: bool = false;
-    _ = g.ghostty_terminal_mode_get(t, dec_mode(1004), &enabled);
-    return enabled;
+    return terminal_mode_get(res.unpack().terminal, dec_mode(1004));
 }
 
 fn eql(a: []const u8, comptime b: []const u8) bool {
