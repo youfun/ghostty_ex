@@ -115,6 +115,9 @@ fn send_exit_if_child_exited(child_pid: c.pid_t, closed: *std.atomic.Value(bool)
 }
 
 fn reader_loop(master_fd: c_int, child_pid: c.pid_t, owner: beam.pid, closed: *std.atomic.Value(bool)) void {
+    beam.independent_context(.{});
+    defer beam.free_env(beam.context.env);
+
     var buf: [4096]u8 = undefined;
 
     const ready_env = beam.alloc_env();

@@ -98,6 +98,9 @@ fn tty_send_resize(owner: beam.pid, size: c.struct_winsize) void {
 }
 
 fn tty_reader_loop(fd: c_int, owner: beam.pid, closed: *std.atomic.Value(bool)) void {
+    beam.independent_context(.{});
+    defer beam.free_env(beam.context.env);
+
     var buf: [4096]u8 = undefined;
     var last_size = tty_window_size(fd);
 
