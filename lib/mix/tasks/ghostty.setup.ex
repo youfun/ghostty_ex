@@ -104,12 +104,22 @@ defmodule Mix.Tasks.Ghostty.Setup do
     lib_dir = Path.join(priv_dir, "lib")
     include_dir = Path.join(priv_dir, "include")
 
-    File.rm_rf!(lib_dir)
-    File.rm_rf!(include_dir)
     File.mkdir_p!(lib_dir)
+
+    # Mix may link the build priv directory to this directory, so NIFs can
+    # live here too. Replace only the VT library artifacts.
+    for file <- File.ls!(lib_dir), String.contains?(file, "ghostty-vt") do
+      File.rm!(Path.join(lib_dir, file))
+    end
+
+    File.rm_rf!(include_dir)
     File.mkdir_p!(include_dir)
 
     copy_libs(Path.join(zig_out, "lib"), lib_dir)
+    # On Windows zig installs the DLL into bin/ while lib/ holds the import
+    # library (ghostty-vt.lib) and the static library. The NIF links the
+    # static library (see terminal/nif.ex), so both artifacts are installed.
+    if windows?(), do: copy_libs(Path.join(zig_out, "bin"), lib_dir)
     copy_include_tree(Path.join([zig_out, "include", "ghostty"]), Path.join(include_dir, "ghostty"))
     fix_dylib_install_name(lib_dir)
   end
@@ -117,18 +127,62 @@ defmodule Mix.Tasks.Ghostty.Setup do
   defp install_to_build do
     src_priv = Path.join(project_root(), "priv")
 
-    for env <- ["dev", "test"] do
-      dest_priv = Path.join([project_root(), "_build", env, "lib", "ghostty", "priv"])
+    # The app path also follows custom MIX_BUILD_PATH locations.
+    dest_privs =
+      [
+        Path.join(Mix.Project.app_path(), "priv"),
+        Path.join([project_root(), "_build", "dev", "lib", "ghostty", "priv"]),
+        Path.join([project_root(), "_build", "test", "lib", "ghostty", "priv"])
+      ]
+      |> Enum.uniq()
+
+    for dest_priv <- dest_privs, separate_priv?(src_priv, dest_priv) do
       dest_lib = Path.join(dest_priv, "lib")
       dest_include = Path.join(dest_priv, "include")
 
-      File.rm_rf!(dest_priv)
       File.mkdir_p!(dest_lib)
       File.mkdir_p!(dest_include)
+
+      # Replace only the libghostty-vt artifacts. The compiled NIF binaries
+      # live in the same lib directory and must survive a re-run of this
+      # task; wiping the whole priv dir would leave them unloaded until a
+      # forced recompile.
+      for file <- File.ls!(dest_lib), String.contains?(file, "ghostty-vt") do
+        File.rm!(Path.join(dest_lib, file))
+      end
 
       copy_libs(Path.join(src_priv, "lib"), dest_lib)
       copy_include_tree(Path.join(src_priv, "include"), dest_include)
       fix_dylib_install_name(dest_lib)
+    end
+
+    if windows?(), do: install_zigler_win_headers(src_priv)
+  end
+
+  # zigler 0.16.0 on Hex omits priv/erl_nif_win from its package files.
+  # Seed the compatibility headers into zigler's priv dir so translate-c succeeds.
+  defp install_zigler_win_headers(src_priv) do
+    win_headers = Path.join(src_priv, "erl_nif_win")
+
+    if File.dir?(win_headers) do
+      zigler_privs =
+        [
+          case :code.priv_dir(:zigler) do
+            {:error, _} -> nil
+            priv -> List.to_string(priv)
+          end,
+          Path.join([project_root(), "deps", "zigler", "priv"]),
+          Path.join([Mix.Project.deps_path(), "zigler", "priv"]),
+          Path.join([Mix.Project.build_path(), "lib", "zigler", "priv"])
+        ]
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+
+      for zigler_priv <- zigler_privs, File.dir?(Path.dirname(zigler_priv)) do
+        dest = Path.join(zigler_priv, "erl_nif_win")
+        File.mkdir_p!(dest)
+        File.cp_r!(win_headers, dest)
+      end
     end
   end
 
@@ -137,7 +191,7 @@ defmodule Mix.Tasks.Ghostty.Setup do
     |> File.ls!()
     |> Enum.filter(fn file ->
       src = Path.join(src_dir, file)
-      String.contains?(file, "ghostty-vt") and File.regular?(src)
+      shared_lib?(file) and File.regular?(src)
     end)
     |> Enum.each(fn file ->
       src = Path.join(src_dir, file)
@@ -145,6 +199,27 @@ defmodule Mix.Tasks.Ghostty.Setup do
       File.cp!(src, dest)
       Mix.shell().info("  #{dest}")
     end)
+  end
+
+  # The shared library ships on every platform. On Windows the NIF links
+  # libghostty-vt statically, so the static library ships too; the import
+  # library (ghostty-vt.lib) and debug symbols (.pdb) stay behind.
+  defp shared_lib?(file) do
+    case :os.type() do
+      {:win32, _} -> file in ["ghostty-vt.dll", "ghostty-vt-static.lib"]
+      {:unix, :darwin} -> String.contains?(file, "libghostty-vt") and String.ends_with?(file, ".dylib")
+      _ -> String.contains?(file, "libghostty-vt") and String.ends_with?(file, ".so")
+    end
+  end
+
+  defp windows?, do: match?({:win32, _}, :os.type())
+
+  defp separate_priv?(src, dest) do
+    Path.expand(src) != Path.expand(dest) and
+      case File.lstat(dest) do
+        {:ok, %{type: :symlink}} -> false
+        _ -> true
+      end
   end
 
   defp copy_include_tree(src, dest) do

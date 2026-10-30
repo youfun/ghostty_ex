@@ -2,9 +2,16 @@ defmodule Ghostty.PTY do
   @moduledoc """
   Pseudo-terminal for running interactive programs.
 
-  Uses `forkpty()` to create a real PTY — programs like `vim`, `top`,
-  and `htop` work correctly. The child process gets a proper TTY with
-  the requested dimensions.
+  On Unix, uses `forkpty()` to create a real PTY — programs like `vim`,
+  `top`, and `htop` get a TTY with the requested dimensions.
+
+  On Windows there is no `forkpty()`: the child's stdin/stdout/stderr are
+  wired to anonymous pipes instead. Programs using stdio can exchange
+  data, but the child runs without a console: console APIs and terminal
+  input events are unavailable. cmd.exe neither echoes input nor prints
+  an interactive prompt. Bare carriage returns written through `write/2`
+  are converted to CRLF. Closing terminates the direct child only;
+  descendant processes are not terminated.
 
   Output is sent as `{:data, binary}` messages to the calling process.
   Exit is reported as `{:exit, status}` when the child exits naturally.
@@ -37,6 +44,8 @@ defmodule Ghostty.PTY do
           | {:args, [String.t()]}
           | {:cols, pos_integer()}
           | {:rows, pos_integer()}
+          | {:cwd, Path.t()}
+          | {:env, [{String.t(), String.t() | nil}]}
           | {:reader_start_timeout, timeout()}
           | {:name, GenServer.name()}
 
@@ -49,10 +58,17 @@ defmodule Ghostty.PTY do
 
   ## Options
 
-    * `:cmd` — command to run (default: `$SHELL` or `/bin/sh`)
+    * `:cmd` — command to run (default: `%COMSPEC%` or `cmd.exe` on Windows;
+      `$SHELL` or `/bin/sh` on Unix)
     * `:args` — argument list (default: `[]`)
     * `:cols` — terminal width in columns (default: `80`)
     * `:rows` — terminal height in rows (default: `24`)
+    * `:cwd` — working directory for the child (default: inherit the BEAM
+      working directory). On Unix the child `chdir`s before `exec`; on Windows
+      it is passed to `CreateProcessW`.
+    * `:env` — environment overrides applied on top of the inherited
+      environment: `{name, value}` sets a variable and `{name, nil}` unsets
+      it (default: `[]`)
     * `:reader_start_timeout` — how long to wait for the PTY reader thread to start (default: `1_000`)
     * `:name` — GenServer name registration
 
@@ -82,7 +98,12 @@ defmodule Ghostty.PTY do
     GenServer.call(pty, {:write, IO.iodata_to_binary(data)})
   end
 
-  @doc "Resizes the PTY and sends SIGWINCH to the child."
+  @doc """
+  Resizes the PTY and sends SIGWINCH to the child.
+
+  On Windows this is a no-op because anonymous pipes have no window size.
+  Resize an associated `Ghostty.Terminal` separately on either platform.
+  """
   @spec resize(GenServer.server(), pos_integer(), pos_integer()) :: :ok
   def resize(pty, cols, rows)
       when is_integer(cols) and cols > 0 and is_integer(rows) and rows > 0 do
@@ -101,17 +122,20 @@ defmodule Ghostty.PTY do
 
   @impl true
   def init(opts) do
-    cmd = Keyword.get(opts, :cmd, System.get_env("SHELL") || "/bin/sh")
+    cmd = Keyword.get(opts, :cmd, default_cmd())
     args = Keyword.get(opts, :args, [])
     cols = Keyword.get(opts, :cols, 80)
     rows = Keyword.get(opts, :rows, 24)
+    cwd = Keyword.get(opts, :cwd, "")
+    env = Keyword.get(opts, :env, [])
     owner = Keyword.fetch!(opts, :owner)
     reader_start_timeout = Keyword.get(opts, :reader_start_timeout, @reader_start_timeout_ms)
 
     validate_size!(cols, rows)
     validate_timeout!(reader_start_timeout, :reader_start_timeout)
+    validate_env!(env)
 
-    ref = Nif.nif_pty_open(cmd, args, cols, rows, self())
+    ref = Nif.nif_pty_open(cmd, args, cols, rows, cwd, env, self())
     wait_until_reader_ready(reader_start_timeout)
     {:ok, %__MODULE__{ref: ref, owner: owner}}
   rescue
@@ -154,6 +178,13 @@ defmodule Ghostty.PTY do
     end
   end
 
+  defp default_cmd do
+    case :os.type() do
+      {:win32, _} -> System.get_env("COMSPEC") || "cmd.exe"
+      _ -> System.get_env("SHELL") || "/bin/sh"
+    end
+  end
+
   defp validate_size!(cols, rows)
        when is_integer(cols) and cols > 0 and is_integer(rows) and rows > 0,
        do: :ok
@@ -169,5 +200,16 @@ defmodule Ghostty.PTY do
 
   defp validate_timeout!(timeout, name) do
     raise ArgumentError, "expected #{name} to be a non-negative integer or :infinity, got: #{inspect(timeout)}"
+  end
+
+  defp validate_env!(env) when is_list(env) do
+    Enum.each(env, fn
+      {key, value} when is_binary(key) and (is_binary(value) or is_nil(value)) -> :ok
+      other -> raise ArgumentError, "expected env entries to be {name, value | nil} binaries, got: #{inspect(other)}"
+    end)
+  end
+
+  defp validate_env!(env) do
+    raise ArgumentError, "expected :env to be a list of {name, value | nil} entries, got: #{inspect(env)}"
   end
 end

@@ -15,7 +15,14 @@ end
 ```
 
 Precompiled terminal and PTY NIF binaries are downloaded automatically for
-x86_64 Linux, aarch64 Linux, and aarch64 macOS.
+x86_64 Linux, aarch64 Linux, and aarch64 macOS for published releases.
+This development branch changes the PTY NIF ABI (`nif_pty_open/7`); build it
+from source with `GHOSTTY_BUILD=1` rather than using the published 0.5.1 NIFs.
+
+Windows x86_64 source builds require Zig 0.16.0 and libghostty-vt built with
+`mix ghostty.setup`, then `$env:GHOSTTY_BUILD = "1"; mix compile` in PowerShell.
+The Windows terminal NIF links `ghostty-vt-static.lib`. The optional TypeScript
+bundle is skipped on Windows because OXC provides no Windows NIF.
 
 ## Usage
 
@@ -155,7 +162,18 @@ interactive smoke test.
 
 ## PTY
 
-Run interactive programs in a real pseudo-terminal:
+On Unix, run interactive programs in a real pseudo-terminal. On Windows,
+`Ghostty.PTY` uses anonymous pipes and a console-less child process, with
+stderr merged into stdout. Programs using stdio can exchange data, but this
+backend does not provide ConPTY, console APIs, input echo or an interactive
+cmd.exe prompt. `resize/3` is a no-op on Windows; resize `Ghostty.Terminal`
+separately. Closing terminates the direct child and leaves descendants running.
+The native `Ghostty.TTY` backend is Unix-only.
+
+Both platforms accept `cwd: path` and `env: [{name, value_or_nil}]`; environment
+overrides inherit other variables, and `nil` removes a variable.
+
+Unix example:
 
 ```elixir
 {:ok, term} = Ghostty.Terminal.start_link(cols: 80, rows: 24)

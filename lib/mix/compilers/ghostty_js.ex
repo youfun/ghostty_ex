@@ -44,7 +44,9 @@ defmodule Mix.Compilers.GhosttyJS do
         {Path.basename(path), File.read!(path)}
       end)
 
-    case OXC.bundle(files, entry: "hook.ts", format: :esm) do
+    # apply/3 keeps the compiler from warning when the optional :oxc dep is
+    # absent (e.g. Windows, where OXC ships no precompiled NIF).
+    case apply(OXC, :bundle, [files, [entry: "hook.ts", format: :esm]]) do
       {:ok, js} ->
         File.mkdir_p!(Path.dirname(output))
         File.write!(output, js)

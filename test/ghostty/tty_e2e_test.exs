@@ -1,6 +1,12 @@
 defmodule Ghostty.TTYE2ETest do
   use ExUnit.Case, async: false
 
+  # The :nif TTY backend drives the BEAM's own terminal through
+  # termios/poll, which is Unix-only. Windows PTY sessions use pipes.
+  if match?({:win32, _}, :os.type()) do
+    @moduletag skip: "Ghostty.TTY :nif backend is Unix-only (termios/poll)"
+  end
+
   alias Ghostty.PTY
 
   @child_event_timeout_ms 3_000

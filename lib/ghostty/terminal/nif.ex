@@ -3,7 +3,12 @@ defmodule Ghostty.Terminal.Nif do
 
   @version Mix.Project.config()[:version]
 
+  # On Windows the NIF links libghostty-vt statically (ghostty-vt-static.lib).
+  # The BEAM loads NIF DLLs without searching the NIF's own directory for
+  # dependencies, so a dynamically linked ghostty-vt.dll would not be found
+  # at runtime; a static link keeps the NIF self-contained.
   @ghostty_vt_lib (case :os.type() do
+                     {:win32, _} -> "lib/ghostty-vt-static.lib"
                      {:unix, :darwin} -> "lib/libghostty-vt.dylib"
                      _ -> "lib/libghostty-vt.so"
                    end)
@@ -13,7 +18,7 @@ defmodule Ghostty.Terminal.Nif do
     base_url: "https://github.com/dannote/ghostty_ex/releases/download/v#{@version}",
     version: @version,
     force_build: System.get_env("GHOSTTY_BUILD") in ["1", "true"],
-    targets: ~w(x86_64-linux-gnu aarch64-linux-gnu aarch64-macos-none),
+    targets: ~w(x86_64-linux-gnu aarch64-linux-gnu aarch64-macos-none x86_64-windows-gnu),
     zig_code_path: "ghostty_nif.zig",
     c: [
       headers: [c: "ghostty_nif.h"],

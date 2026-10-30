@@ -54,9 +54,43 @@ defmodule Ghostty.MixProject do
   end
 
   defp compile_with_ghostty_priv(args) do
+    ensure_zigler_erl_nif_win()
     sync_build_priv_if_needed()
     Mix.Tasks.Compile.run(args)
     bundle_typescript()
+  end
+
+  # zigler 0.16.0's Hex package omits priv/erl_nif_win, which its Windows
+  # NIF compilation requires (translate-c of erl_nif_win.h). The headers are
+  # vendored under priv/erl_nif_win; install them into zigler's priv dir
+  # when missing — both the dep source priv (mix links or copies it into
+  # every build) and the currently resolved priv dir (recompiles).
+  defp ensure_zigler_erl_nif_win do
+    if match?({:win32, _}, :os.type()) do
+      src = Path.join(Path.dirname(Mix.Project.project_file()), "priv/erl_nif_win")
+
+      if File.dir?(src) do
+        copy_erl_nif_win(src, Path.join(Mix.Project.deps_path(), "zigler/priv"))
+
+        case :code.priv_dir(:zigler) do
+          {:error, _} -> :ok
+          priv -> copy_erl_nif_win(src, List.to_string(priv))
+        end
+      end
+    end
+  end
+
+  defp copy_erl_nif_win(src, dest_priv) do
+    dest = Path.join(dest_priv, "erl_nif_win")
+
+    for file <- File.ls!(src), String.ends_with?(file, ".h") do
+      dest_file = Path.join(dest, file)
+
+      unless File.exists?(dest_file) do
+        File.mkdir_p!(dest)
+        File.cp!(Path.join(src, file), dest_file)
+      end
+    end
   end
 
   defp sync_build_priv_if_needed do
@@ -67,29 +101,46 @@ defmodule Ghostty.MixProject do
       src_include = Path.join(src_priv, "include")
 
       if File.dir?(src_lib) do
-        env = to_string(Mix.env())
-        dest_priv = Path.join([root, "_build", env, "lib", "ghostty", "priv"])
-        dest_lib = Path.join(dest_priv, "lib")
-        dest_include = Path.join(dest_priv, "include")
+        # Zigler links against the app's priv directory, including custom
+        # MIX_BUILD_PATH locations used by nested dependency builds.
+        dest_privs =
+          [
+            Path.join(Mix.Project.app_path(), "priv"),
+            Path.join([root, "_build", to_string(Mix.env()), "lib", "ghostty", "priv"])
+          ]
+          |> Enum.uniq()
 
-        File.mkdir_p!(dest_lib)
+        for dest_priv <- dest_privs, separate_priv?(src_priv, dest_priv) do
+          dest_lib = Path.join(dest_priv, "lib")
+          dest_include = Path.join(dest_priv, "include")
 
-        src_lib
-        |> File.ls!()
-        |> Enum.filter(&String.contains?(&1, "ghostty-vt"))
-        |> Enum.each(fn file ->
-          File.cp!(Path.join(src_lib, file), Path.join(dest_lib, file))
-        end)
+          File.mkdir_p!(dest_lib)
 
-        if File.dir?(src_include) and File.lstat!(dest_priv).type != :symlink do
-          File.rm_rf!(dest_include)
-          File.mkdir_p!(Path.dirname(dest_include))
-          File.cp_r!(src_include, dest_include)
+          src_lib
+          |> File.ls!()
+          |> Enum.filter(&String.contains?(&1, "ghostty-vt"))
+          |> Enum.each(fn file ->
+            File.cp!(Path.join(src_lib, file), Path.join(dest_lib, file))
+          end)
+
+          if File.dir?(src_include) do
+            File.rm_rf!(dest_include)
+            File.mkdir_p!(Path.dirname(dest_include))
+            File.cp_r!(src_include, dest_include)
+          end
+
+          fix_dylib_install_name(dest_lib)
         end
-
-        fix_dylib_install_name(dest_lib)
       end
     end
+  end
+
+  defp separate_priv?(src, dest) do
+    Path.expand(src) != Path.expand(dest) and
+      case File.lstat(dest) do
+        {:ok, %{type: :symlink}} -> false
+        _ -> true
+      end
   end
 
   defp fix_dylib_install_name(lib_dir) do
@@ -125,9 +176,16 @@ defmodule Ghostty.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_dna, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:ex_slop, "~> 0.2", only: [:dev, :test], runtime: false},
-      {:oxc, "~> 0.5"}
-    ]
+      {:ex_slop, "~> 0.2", only: [:dev, :test], runtime: false}
+    ] ++ oxc_dep()
+  end
+
+  # OXC publishes no Windows precompiled NIF. The TypeScript bundle it
+  # produces only feeds Ghostty.LiveTerminal assets, and
+  # Mix.Compilers.GhosttyJS no-ops when the OXC module is absent, so
+  # Windows builds simply skip the dependency.
+  defp oxc_dep do
+    if match?({:win32, _}, :os.type()), do: [], else: [{:oxc, "~> 0.5"}]
   end
 
   defp package do
@@ -156,6 +214,7 @@ defmodule Ghostty.MixProject do
         lib/ghostty.ex
         lib/mix
         priv/ts
+        priv/erl_nif_win
         examples/*.exs
         mix.exs README.md LICENSE CHANGELOG.md .formatter.exs .ghostty-ref
         checksum-Ghostty.Terminal.Nif.exs
